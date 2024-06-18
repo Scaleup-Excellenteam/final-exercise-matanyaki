@@ -1,36 +1,32 @@
-import aiohttp
 import openai
-from aiohttp import ClientSession
-
+from tenacity import retry, stop_after_attempt, wait_random_exponential
+from openai import AsyncOpenAI
 
 class OpenAIClient:
     def __init__(self, api_key):
-        self.api_key = api_key
+        self.client = AsyncOpenAI(api_key=api_key)
 
-    async def get_explanation(self, session : ClientSession, text : str) -> str:
-        prompt = f"Explain the following slide content in detail:\n\n{text}"
+    #Using to manage information in required pace
+    @retry(
+        stop=stop_after_attempt(3),  # Maximum number of retry attempts
+        wait=wait_random_exponential(min=1, max=60),  # Exponential backoff with jitter
+    )
+    async def get_explanation(self, text: str) -> str:
+        #Description for the api
+        prompt = f"Explain the following slide content in concise language:\n\n{text}\n\nLimit the explanation to the key points and ensure it's shorter than the slide itself."
+
         try:
-            async with session.post(
-                'https://api.openai.com/v1/chat/completions',
-                headers={
-                    'Authorization': f'Bearer {self.api_key}',
-                    'Content-Type': 'application/json'
-                },
-                json={
-                    'model': 'gpt-3.5-turbo',
-                    'messages': [
-                        {"role": "system", "content": "You are a helpful assistant."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    'max_tokens': 500
-                }
-            ) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    return data['choices'][0]['message']['content'].strip()
-                else:
-                    return f"Error: {response.status} - {response.reason}"
-        except aiohttp.ClientError as e:
-            return f"HTTP error: {str(e)}"
+            response = await self.client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=100,
+                temperature=0.7
+            )
+            return response.choices[0].message.content.strip()
         except openai.OpenAIError as e:
             return f"OpenAI API error: {str(e)}"
+        except Exception as e:
+            return f"Error: {str(e)}"
+
